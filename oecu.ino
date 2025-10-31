@@ -2,104 +2,137 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_AHTX0.h>
+#include <Adafruit_BMP280.h>
 
-#define LED_R       0
-#define LED_G       2
-#define LED_B       4
-#define switch_1   12
-#define switch_2   14
-#define switch_3   26
-#define switch_4   27
-#define buzzer     15
-#define VR         25
+// --- ピン定義 ---
+#define LED_R     15
+#define LED_G     2
+#define LED_B     4
+#define SWITCH_1  12
+#define SWITCH_2  14
+#define SWITCH_3  26
+#define SWITCH_4  27
+#define VR        25
 
+// --- OLED設定 ---
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
+// --- センサー設定 ---
+Adafruit_AHTX0 aht;
+Adafruit_BMP280 bmp;  // I2Cアドレス 0x77
+
+// --- PWM設定 ---
 #define PWM_FREQ 5000
-#define PWM_RES 8   // 0~255
+#define PWM_RES 8  // 0~255
 
 int colorMode = 0; // 0=OFF, 1=RED, 2=GREEN, 3=BLUE
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
+  Wire.begin(21, 22); // SDA=21, SCL=22（ESP32標準ピン）
 
-  pinMode(switch_1, INPUT_PULLUP);
-  pinMode(switch_2, INPUT_PULLUP);
-  pinMode(switch_3, INPUT_PULLUP);
-  pinMode(switch_4, INPUT_PULLUP);
-  pinMode(buzzer, OUTPUT);
+  pinMode(SWITCH_1, INPUT_PULLUP);
+  pinMode(SWITCH_2, INPUT_PULLUP);
+  pinMode(SWITCH_3, INPUT_PULLUP);
+  pinMode(SWITCH_4, INPUT_PULLUP);
 
-  // 新しいESP32用PWM初期化（チャンネル自動割当）
-  if (!ledcAttach(LED_R, PWM_FREQ, PWM_RES)) Serial.println("LED_R attach failed");
-  if (!ledcAttach(LED_G, PWM_FREQ, PWM_RES)) Serial.println("LED_G attach failed");
-  if (!ledcAttach(LED_B, PWM_FREQ, PWM_RES)) Serial.println("LED_B attach failed");
+  ledcAttach(LED_R, PWM_FREQ, PWM_RES);
+  ledcAttach(LED_G, PWM_FREQ, PWM_RES);
+  ledcAttach(LED_B, PWM_FREQ, PWM_RES);
 
-  // OLED初期化
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;);
+    while (1);
   }
 
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.println(F("RGB Controller Ready!"));
+  display.println(F("Init..."));
   display.display();
+
+  if (!aht.begin()) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println(F("AHT20 not found"));
+    display.display();
+    while (1);
+  }
+
+  if (!bmp.begin(0x77)) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println(F("BMP280 not found"));
+    display.display();
+    while (1);
+  }
+
+  delay(1000);
 }
 
 void loop() {
   int vrValue = analogRead(VR);
-  int brightness = map(vrValue, 0, 4095, 0, 255); // ESP32 ADCは12bit
+  int brightness = map(vrValue, 0, 4095, 0, 255);
 
-  // スイッチで色モード切替
-  if (digitalRead(switch_1) == LOW) colorMode = 1;
-  if (digitalRead(switch_2) == LOW) colorMode = 2;
-  if (digitalRead(switch_3) == LOW) colorMode = 3;
-  if (digitalRead(switch_4) == LOW) colorMode = 0; // switch4でOFF
+  if (digitalRead(SWITCH_1) == LOW) colorMode = 1;
+  if (digitalRead(SWITCH_2) == LOW) colorMode = 2;
+  if (digitalRead(SWITCH_3) == LOW) colorMode = 3;
+  if (digitalRead(SWITCH_4) == LOW) colorMode = 0;
 
-  // LED出力（新しいledcWrite）
   switch (colorMode) {
-    case 1: // 赤
+    case 1:
       ledcWrite(LED_R, brightness);
       ledcWrite(LED_G, 0);
       ledcWrite(LED_B, 0);
       break;
-    case 2: // 緑
+    case 2:
       ledcWrite(LED_R, 0);
       ledcWrite(LED_G, brightness);
       ledcWrite(LED_B, 0);
       break;
-    case 3: // 青
+    case 3:
       ledcWrite(LED_R, 0);
       ledcWrite(LED_G, 0);
       ledcWrite(LED_B, brightness);
       break;
-    default: // 消灯
+    default:
       ledcWrite(LED_R, 0);
       ledcWrite(LED_G, 0);
       ledcWrite(LED_B, 0);
       break;
   }
 
-  // OLED表示更新
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.setTextSize(1);
-  display.print("Mode: ");
-  switch (colorMode) {
-    case 1: display.println("RED"); break;
-    case 2: display.println("GREEN"); break;
-    case 3: display.println("BLUE"); break;
-    default: display.println("OFF");
-  }
-  display.print("Brightness: ");
-  display.println(brightness);
-  display.display();
+  sensors_event_t humidity, temp;
+  aht.getEvent(&humidity, &temp);
+  float pressure = bmp.readPressure() / 100.0F; // hPa
 
-  delay(100);
+  display.clearDisplay();
+
+  // 温度（大きく中央表示）
+  display.setTextSize(2);
+  display.setCursor(0, 0);
+  display.printf("%.1f C", temp.temperature);
+
+  // 湿度・気圧
+  display.setTextSize(1);
+  display.setCursor(0, 30);
+  display.printf("Hum: %.1f %%", humidity.relative_humidity);
+  display.setCursor(0, 42);
+  display.printf("Pre: %.1f hPa", pressure);
+
+  // LED色・明るさ
+  display.setCursor(0, 54);
+  display.print("LED: ");
+  switch (colorMode) {
+    case 1: display.print("RED"); break;
+    case 2: display.print("GREEN"); break;
+    case 3: display.print("BLUE"); break;
+    default: display.print("OFF"); break;
+  }
+  display.printf("  %3d", brightness);
+
+  display.display();
+  delay(500);
 }
