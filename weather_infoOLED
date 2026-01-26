@@ -178,6 +178,7 @@ void loop() {
       display.clearDisplay();
       break;
   }
+#if 0
   switch (colorMode) {
     case 1: display.print("RED"); break;
     case 2: display.print("GREEN"); break;
@@ -185,6 +186,7 @@ void loop() {
     default: display.print("OFF"); break;
   }
   display.printf("  %3d", brightness);
+#endif
 
   display.display();
   delay(500);
