@@ -28,7 +28,9 @@ Adafruit_BMP280 bmp;  // I2Cアドレス 0x77
 #define PWM_FREQ 5000
 #define PWM_RES 8  // 0~255
 
-int colorMode = 0;  // 0=OFF, 1=RED, 2=GREEN, 3=BLUE
+/* 0=OFF, 1=RED, 2=GREEN, 3=BLUE0=OFF
+   0=OFF, 1=温湿度計, 2=名前, 3=情報 */
+int mode = 0;
 
 void setup() {
   Wire.begin(21, 22);  // SDA=21, SCL=22（ESP32標準ピン）
@@ -79,12 +81,12 @@ void loop() {
   int vrValue = analogRead(VR);
   int brightness = map(vrValue, 0, 4095, 0, 255);
 
-  if (digitalRead(SWITCH_1) == LOW) colorMode = 1;
-  if (digitalRead(SWITCH_2) == LOW) colorMode = 2;
-  if (digitalRead(SWITCH_3) == LOW) colorMode = 3;
-  if (digitalRead(SWITCH_4) == LOW) colorMode = 0;
+  if (digitalRead(SWITCH_1) == LOW) mode = 1;
+  if (digitalRead(SWITCH_2) == LOW) mode = 2;
+  if (digitalRead(SWITCH_3) == LOW) mode = 3;
+  if (digitalRead(SWITCH_4) == LOW) mode = 0;
 
-  switch (colorMode) {
+  switch (mode) {
     case 1:
       ledcWrite(LED_R, brightness);
       ledcWrite(LED_G, 0);
@@ -112,22 +114,68 @@ void loop() {
   float pressure = bmp.readPressure() / 100.0F;  // hPa
 
   display.clearDisplay();
+  switch (mode) {
+    //温湿度計
+    case 1:
+      // 温度（大きく中央表示）
+      display.setTextSize(2);
+      display.setCursor(0, 0);
+      display.printf("%.1f C", temp.temperature);
+      // 湿度・気圧
+      display.setTextSize(1);
+      display.setCursor(0, 30);
+      display.printf("Hum: %.1f %%", humidity.relative_humidity);
+      display.setCursor(0, 42);
+      display.printf("Pre: %.1f hPa", pressure);
+      // LED色・明るさ
+      display.setCursor(0, 54);
+     display.print("LED: ");
+      break;
 
-  // 温度（大きく中央表示）
-  display.setTextSize(2);
-  display.setCursor(0, 0);
-  display.printf("%.1f C", temp.temperature);
-
-  // 湿度・気圧
-  display.setTextSize(1);
-  display.setCursor(0, 30);
-  display.printf("Hum: %.1f %%", humidity.relative_humidity);
-  display.setCursor(0, 42);
-  display.printf("Pre: %.1f hPa", pressure);
-
-  // LED色・明るさ
-  display.setCursor(0, 54);
-  display.print("LED: ");
+    //名前  
+    case 2:
+      // 名前を入力してみよう
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.printf("Kazuma Nakamori");
+     
+      //誕生日を入力してみよう
+      display.setTextSize(1);
+      display.setCursor(0, 30);
+      display.printf("b-day:9/26");
+      
+      //好きな食べ物を入力してみよう
+      display.setCursor(0, 42);
+      display.printf("I like candy.");
+      
+      // LED色・明るさ
+      display.setCursor(0, 54);
+      display.print("LED: ");
+      break;
+    //情報
+    case 3:
+      //大阪電気通信大学通信研究会
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.printf("OECU-2ken");
+     
+      //製作日
+      display.setTextSize(1);
+      display.setCursor(0, 30);
+      display.printf("2026/02/03");
+      
+      //企画名
+      display.setCursor(0, 42);
+      display.printf("Challenge Club");
+      
+      // LED色・明るさ
+      display.setCursor(0, 54);
+      display.print("LED: ");      
+      break;
+    default:
+      display.clearDisplay();
+      break;
+  }
   switch (colorMode) {
     case 1: display.print("RED"); break;
     case 2: display.print("GREEN"); break;
