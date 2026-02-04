@@ -8,6 +8,7 @@
 #include <WebServer.h>
 #include <Preferences.h>
 
+// ---------- ピンアサイン ----------
 #define LED_R     15
 #define LED_G     2
 #define LED_B     4
@@ -16,78 +17,109 @@
 #define SWITCH_3  26
 #define SWITCH_4  27
 
-int colorMode = 0; // 0=OFF 1=RED 2=GREEN 3=BLUE
+int colorMode = 0; 
 
-
-// ---------- Wifi Setting ----------
-const char* ap_ssid = "ESP32_WeatherAP";
-const char* ap_password = "12345678";
+// ---------- ★WiFi設定（ここを書き換えてください） ★ ----------
+const char* ap_ssid = "test";      // 新しいSSID
+const char* ap_password = "12345678";   // 新しいパスワード
 
 // ---------- OLED ----------
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// ---------- bmp ----------
+// ---------- センサー ----------
 Adafruit_AHTX0 aht;
 Adafruit_BMP280 bmp;
 
-// ---------- WiFi ----------
+// ---------- WiFi関連変数 ----------
 Preferences prefs;
 int apChannel = 1;
-int nextChannel = 1;
-bool rebootNeeded = false;
-
-// ----------timer ----------
 unsigned long lastCheck = 0;
 const unsigned long CHECK_INTERVAL = 300000; // 5分
 
-// ---------- Web ----------
+// ---------- Webサーバー ----------
 WebServer server(80);
 
-// ---------- wifi channel scan（only start up） ----------
+
+String makeHtml(float temp, float humi, float pres) {
+  // --- デザインの設定 (CSS) ---
+  // 色の名前（red, blueなど）や、大きさ（px）を変えてみよう！
+  String css = "<style>"
+    "body { background-color: #f0f8ff; text-align: center; font-family: sans-serif; padding-top: 50px; }"
+    "h1   { color: #00008b; font-size: 40px; }"           // タイトルの色と大きさ
+    ".data-box { background: white; border-radius: 20px; padding: 30px; display: inline-block; box-shadow: 10px 10px 10px rgba(0,0,0,0.1); }"
+    ".temp { color: #ff4500; font-size: 60px; margin: 10px; }" // 温度の色
+    ".humi { color: #1e90ff; font-size: 60px; margin: 10px; }" // 湿度の色
+    ".pres { color: #2e8b57; font-size: 60px; margin: 10px; }" // 気圧の色
+    "p { font-size: 20px; color: #666; }"
+    "</style>";
+
+  // --- 画面の中身 (HTML) ---
+  // 文字を書きかえてみよう！
+  String html = "<html><head><meta charset='utf-8'>";
+  html += "<meta http-equiv='refresh' content='5'>"; // 5秒ごとに自動更新
+  html += css;
+  html += "</head><body>";
+  
+  html += "<h1>ESP32 お天気ステーション</h1>";
+  
+  html += "<div class='data-box'>";
+  html += "  <div class='temp'>温度: " + String(temp, 1) + "℃</div>";
+  html += "  <div class='humi'>湿度: " + String(humi, 1) + "%</div>";
+  html += "  <div class='pres'>気圧: " + String(pres, 1) + "hPa</div>";
+  html += "</div>";
+
+  html += "<p>いまのSSID: " + String(ap_ssid) + "</p>";
+  
+  html += "</body></html>";
+  return html;
+}
+
+// WiFiチャンネルスキャン（起動時のみ）
 int scanBestChannelOnce() {
   WiFi.mode(WIFI_STA);
   delay(100);
-
   int count[14] = {0};
   int n = WiFi.scanNetworks();
-  if (n <= 0) return apChannel;
-
+  if (n <= 0) return 1;
   for (int i = 0; i < n; i++) {
     int ch = WiFi.channel(i);
     if (ch >= 1 && ch <= 13) count[ch]++;
   }
-
   int best = 1;
   int minVal = count[1];
   for (int ch = 2; ch <= 13; ch++) {
-    if (count[ch] < minVal) {
-      minVal = count[ch];
-      best = ch;
-    }
+    if (count[ch] < minVal) { minVal = count[ch]; best = ch; }
   }
   return best;
 }
 
+// Webサーバーのルートアクセス時の処理
+void handleRoot() {
+  sensors_event_t h, t;
+  aht.getEvent(&h, &t);
+  float p = bmp.readPressure() / 100.0;
+  String currentHtml = makeHtml(t.temperature, h.relative_humidity, p);
+  server.send(200, "text/html", currentHtml);
+}
+
 // ================= SETUP =================
 void setup() {
+  Serial.begin(115200);
+
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
-
   pinMode(SWITCH_1, INPUT_PULLUP);
   pinMode(SWITCH_2, INPUT_PULLUP);
   pinMode(SWITCH_3, INPUT_PULLUP);
   pinMode(SWITCH_4, INPUT_PULLUP);
 
-  digitalWrite(LED_R, LOW);
-  digitalWrite(LED_G, LOW);
-  digitalWrite(LED_B, LOW);
-
   Wire.begin(21, 22);
-
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) while (1);
+  if (!aht.begin() || !bmp.begin(0x77)) while (1);
+
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.clearDisplay();
@@ -95,8 +127,8 @@ void setup() {
   display.println("BOOTING...");
   display.display();
 
-  if (!aht.begin() || !bmp.begin(0x77)) while (1);
-
+  // WiFi設定の強制更新
+  WiFi.softAPdisconnect(true); 
   prefs.begin("wifi", false);
   apChannel = prefs.getInt("ap_ch", 1);
 
@@ -109,69 +141,36 @@ void setup() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ap_ssid, ap_password, apChannel);
 
-  // Web
-  server.on("/", []() {
-    server.send(200, "text/plain", "ESP32 Weather Station");
-  });
+  server.on("/", handleRoot); 
   server.begin();
 }
 
 // ================= LOOP =================
 void loop() {
-  // ---------- button in ----------
-if (digitalRead(SWITCH_1) == LOW) colorMode = 1;
-if (digitalRead(SWITCH_2) == LOW) colorMode = 2;
-if (digitalRead(SWITCH_3) == LOW) colorMode = 3;
-if (digitalRead(SWITCH_4) == LOW) colorMode = 0;
+  // スイッチ入力
+  if (digitalRead(SWITCH_1) == LOW) colorMode = 1;
+  if (digitalRead(SWITCH_2) == LOW) colorMode = 2;
+  if (digitalRead(SWITCH_3) == LOW) colorMode = 3;
+  if (digitalRead(SWITCH_4) == LOW) colorMode = 0;
 
-// ---------- LED out ----------
-switch (colorMode) {
-  case 1: // RED
-    digitalWrite(LED_R, HIGH);
-    digitalWrite(LED_G, LOW);
-    digitalWrite(LED_B, LOW);
-    break;
-  case 2: // GREEN
-    digitalWrite(LED_R, LOW);
-    digitalWrite(LED_G, HIGH);
-    digitalWrite(LED_B, LOW);
-    break;
-  case 3: // BLUE
-    digitalWrite(LED_R, LOW);
-    digitalWrite(LED_G, LOW);
-    digitalWrite(LED_B, HIGH);
-    break;
-  default: // OFF
-    digitalWrite(LED_R, LOW);
-    digitalWrite(LED_G, LOW);
-    digitalWrite(LED_B, LOW);
-    break;
-}
-
-  unsigned long now = millis();
-  if (now - lastCheck > CHECK_INTERVAL) {
-    lastCheck = now;
-    rebootNeeded = true;
+  // LED制御
+  switch (colorMode) {
+    case 1: digitalWrite(LED_R, HIGH); digitalWrite(LED_G, LOW);  digitalWrite(LED_B, LOW);  break;
+    case 2: digitalWrite(LED_R, LOW);  digitalWrite(LED_G, HIGH); digitalWrite(LED_B, LOW);  break;
+    case 3: digitalWrite(LED_R, LOW);  digitalWrite(LED_G, LOW);  digitalWrite(LED_B, HIGH); break;
+    default: digitalWrite(LED_R, LOW); digitalWrite(LED_G, LOW);  digitalWrite(LED_B, LOW);  break;
   }
 
   sensors_event_t h, t;
   aht.getEvent(&h, &t);
   float p = bmp.readPressure() / 100.0;
 
-  // OLED
+  // OLED表示
   display.clearDisplay();
   display.setCursor(0, 0);
   display.printf("SSID:%s\n", ap_ssid);
   display.printf("IP:%s\n", WiFi.softAPIP().toString().c_str());
   display.printf("CH:%d\n", apChannel);
-
-  if (rebootNeeded) {
-    display.println("OPTIMIZE ON");
-    display.println("NEXT BOOT");
-  } else {
-    display.println("CH OK");
-  }
-
   display.printf("T:%.1fC H:%.1f%%\n", t.temperature, h.relative_humidity);
   display.printf("P:%.1fhPa\n", p);
   display.display();
